@@ -1,4 +1,4 @@
-  name: prod
+name: prod
 
 on:
   workflow_dispatch:
