@@ -5,8 +5,8 @@ on:
   push:
     tags:
       - prod-*
-  # release:
-  #   types: [published]
+   release:
+     types: [published]
 
 jobs:
   build:
