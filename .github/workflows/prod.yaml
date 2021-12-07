@@ -1,0 +1,91 @@
+  name: prod
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - prod-*
+  # release:
+  #   types: [published]
+
+jobs:
+  build:
+    name: Build on ECR application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: secrets.AWS_ACCESS_KEY_ID_PROD
+          aws-secret-access-key: secrets.AWS_SECRET_ACCESS_KEY_PROD
+          aws-region: sa-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          GITHUB_USER: github.actor
+          GITHUB_TOKEN: secrets.ESTRATEGIACI_TOKEN
+          ECR_REGISTRY: steps.login-ecr.outputs.registry
+          ECR_REPOSITORY: tech-alerts-notification-prod
+          IMAGE_TAG: github.sha
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./Dockerfile --build-arg GITHUB_USER="$GITHUB_USER" --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" > image.txt
+
+      - name: Store image tag
+        uses: actions/upload-artifact@v1
+        with:
+          name: image
+          path: image.txt
+  deploy:
+    name: Update task definition
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download image result
+        uses: actions/download-artifact@v1
+        with:
+          name: image
+
+      - name: export image as output
+        id: set-image
+        run: |
+          value=$(cat image/image.txt)
+          echo "::set-output name=image::$value"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: secrets.AWS_ACCESS_KEY_ID_PROD
+          aws-secret-access-key: secrets.AWS_SECRET_ACCESS_KEY_PROD
+          aws-region: sa-east-1
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition tech-alerts-notification-prod --query taskDefinition > task-definition.json
+      
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: tech-alerts-notification-prod
+          image: steps.set-image.outputs.image
+      
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: steps.task-def.outputs.task-definition
+          service: tech-alerts-notification-prod
+          cluster: cluster-tech-alerts-notification-prod
+          wait-for-service-stability: true
