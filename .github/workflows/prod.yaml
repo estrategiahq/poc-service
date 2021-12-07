@@ -1,12 +1,6 @@
 name: prod
 
-on:
-  workflow_dispatch:
-  push:
-    tags:
-      - prod-*
-  # release:
-  #   types: [published]
+on: workflow_dispatch
 
 jobs:
   build:
